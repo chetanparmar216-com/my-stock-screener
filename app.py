@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 NSE Level-Based Expert Screener (All Columns Fixed)")
+st.title("🎯 NSE Level-Based Expert Screener (Clean Numbers)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -58,53 +58,4 @@ FO_STOCKS = [
     "MPHASIS.NS", "MRF.NS", "MUTHOOTFIN.NS", "NATIONALUM.NS", "NAUKRI.NS", "NAVINFLUOR.NS",
     "NESTLEIND.NS", "NMDC.NS", "NTPC.NS", "OBEROIRLTY.NS", "OFSS.NS", "ONGC.NS", "PAGEIND.NS",
     "PEL.NS", "PERSISTENT.NS", "PETRONET.NS", "PFC.NS", "PIDILITIND.NS", "PIIND.NS", "PNB.NS",
-    "POLYCAB.NS", "POWERGRID.NS", "PVRINOX.NS", "RAMCOCEM.NS", "RBLBANK.NS", "RECLTD.NS",
-    "RELIANCE.NS", "SAIL.NS", "SBICARD.NS", "SBILIFE.NS", "SBIN.NS", "SHREECEM.NS",
-    "SHRIRAMFIN.NS", "SIEMENS.NS", "SRF.NS", "SUNPHARMA.NS", "SUNTV.NS", "SYNGENE.NS",
-    "TATACHEM.NS", "TATACOMM.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATAPOWER.NS",
-    "TATASTEEL.NS", "TCS.NS", "TECHM.NS", "TITAN.NS", "TORNTPHARM.NS", "TORNTPOWER.NS",
-    "TRENT.NS", "TVSMOTOR.NS", "UBL.NS", "ULTRACEMCO.NS", "UPL.NS", "VEDL.NS", "VOLTAS.NS",
-    "WIPRO.NS", "ZEEL.NS", "ZYDUSLIFE.NS"
-]
-
-def fetch_stock_data(ticker):
-    try:
-        df_stock = yf.Ticker(ticker).history(period="6mo", interval="1d")
-        if len(df_stock) < 50:
-            return None
-
-        # Moving Averages & Volume
-        df_stock['EMA_20'] = df_stock['Close'].ewm(span=20, adjust=False).mean()
-        df_stock['EMA_50'] = df_stock['Close'].ewm(span=50, adjust=False).mean()
-        df_stock['EMA_200'] = df_stock['Close'].ewm(span=200, adjust=False).mean()
-        df_stock['Vol_Avg'] = df_stock['Volume'].rolling(window=10).mean()
-
-        # RSI (14)
-        delta = df_stock['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df_stock['RSI'] = 100 - (100 / (1 + rs))
-
-        # OBV
-        obv = [0]
-        for i in range(1, len(df_stock)):
-            if df_stock['Close'].iloc[i] > df_stock['Close'].iloc[i - 1]:
-                obv.append(obv[-1] + df_stock['Volume'].iloc[i])
-            elif df_stock['Close'].iloc[i] < df_stock['Close'].iloc[i - 1]:
-                obv.append(obv[-1] - df_stock['Volume'].iloc[i])
-            else:
-                obv.append(obv[-1])
-        df_stock['OBV'] = obv
-        df_stock['OBV_EMA'] = df_stock['OBV'].ewm(span=20, adjust=False).mean()
-
-        curr = df_stock.iloc[-1]
-        prev = df_stock.iloc[-2]
-        
-        ltp = round(float(curr['Close']), 2)
-        open_p = round(float(curr['Open']), 2)
-        high_p = round(float(curr['High']), 2)
-        prev_high = round(float(prev['High']), 2)
-        prev_low = round(float(prev['Low']), 2)
-        vol_ratio = round(curr['Volume'] / curr['Vol_Avg'], 2) if curr['Vol_Avg'] > 0 else 1.0
-        change_pct = round(((curr
+    "POLYCAB.NS", "POWERGRID.NS", "PVRINOX.NS", "RAMCOCEM.
