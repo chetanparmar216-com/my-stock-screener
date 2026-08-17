@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 
 st.set_page_config(page_title="NSE F&O Ultimate Screener", layout="wide")
-st.title("📊 NSE Ultimate F&O Screener (With Swing & Controls)")
+st.title("📊 NSE Ultimate F&O Screener (Gainers/Losers & Institutional Flow)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -61,9 +61,9 @@ def fetch_stock_data(ticker):
             return None
 
         # Moving Averages & Volume Average
+        df_stock['EMA_20'] = df_stock['Close'].ewm(span=20, adjust=False).mean()
         df_stock['EMA_50'] = df_stock['Close'].ewm(span=50, adjust=False).mean()
         df_stock['EMA_200'] = df_stock['Close'].ewm(span=200, adjust=False).mean()
-        df_stock['EMA_20'] = df_stock['Close'].ewm(span=20, adjust=False).mean()
         df_stock['Vol_Avg'] = df_stock['Volume'].rolling(window=10).mean()
 
         # RSI (14)
@@ -73,7 +73,7 @@ def fetch_stock_data(ticker):
         rs = gain / loss
         df_stock['RSI'] = 100 - (100 / (1 + rs))
 
-        # Institutional Money Flow: On-Balance Volume (OBV)
+        # Institutional Flow (OBV)
         obv = [0]
         for i in range(1, len(df_stock)):
             if df_stock['Close'].iloc[i] > df_stock['Close'].iloc[i - 1]:
@@ -118,7 +118,7 @@ fragment_refresh = refresh_sec if auto_refresh else None
 
 @st.fragment(run_every=fragment_refresh)
 def render_screener_dashboard():
-    with st.spinner("Scanning Complete F&O Market..."):
+    with st.spinner("Market Data Scanning (Gainers/Losers & Setups)..."):
         with ThreadPoolExecutor(max_workers=12) as executor:
             results = list(executor.map(fetch_stock_data, FO_STOCKS))
         results = [r for r in results if r is not None]
@@ -130,24 +130,36 @@ def render_screener_dashboard():
 
     st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
-    # Tabs Configuration (Wapas saare options arrange kar diye hain)
-    tab_intraday, tab_btst, tab_swing, tab_buy, tab_sell, tab_all = st.tabs([
+    # Tabs with Top Gainers and Top Losers included
+    tab_gainers, tab_losers, tab_intraday, tab_btst, tab_swing, tab_buy, tab_sell, tab_all = st.tabs([
+        "🚀 Top Gainers",
+        "🔻 Top Losers",
         "⚡ Intraday Breakouts",
         "🌙 BTST Setups",
-        "📈 Swing Trading Setups",
-        "🟢 Heavy Buying (Accumulation)",
-        "🔴 Heavy Selling (Distribution)",
+        "📈 Swing Trading",
+        "🟢 Heavy Buying",
+        "🔴 Heavy Selling",
         "📋 All F&O Stocks"
     ])
 
+    with tab_gainers:
+        st.subheader("🚀 Top Gainers (Highest % Gain Today)")
+        gainers_df = df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)
+        st.dataframe(gainers_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']], use_container_width=True)
+
+    with tab_losers:
+        st.subheader("🔻 Top Losers (Highest % Loss Today)")
+        losers_df = df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)
+        st.dataframe(losers_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']], use_container_width=True)
+
     with tab_intraday:
-        st.subheader("⚡ Intraday Momentum Setups")
-        intraday_df = df[(df['LTP'] > df['Prev_High']) & (df['RSI'] >= 50)]
+        st.subheader("⚡ Intraday Momentum Setups (LTP > Previous Day High)")
+        intraday_df = df[(df['LTP'] > df['Prev_High']) & (df['RSI'] >= 50)].sort_values(by="Change %", ascending=False)
         st.dataframe(intraday_df[['Symbol', 'LTP', 'Change %', 'Prev_High', 'RSI', 'Vol_Ratio', 'Status']], use_container_width=True)
 
     with tab_btst:
-        st.subheader("🌙 BTST Candidates")
-        btst_df = df[(df['LTP'] > df['EMA_20']) & (df['Change %'] > 0)]
+        st.subheader("🌙 BTST Candidates (Positive Momentum + > EMA 20)")
+        btst_df = df[(df['LTP'] > df['EMA_20']) & (df['Change %'] > 0)].sort_values(by="Change %", ascending=False)
         st.dataframe(btst_df[['Symbol', 'LTP', 'Change %', 'EMA_20', 'RSI', 'Vol_Ratio', 'Status']], use_container_width=True)
 
     with tab_swing:
@@ -159,7 +171,7 @@ def render_screener_dashboard():
             st.info("Filhaal koi stock Swing setup criteria match nahi kar raha hai.")
 
     with tab_buy:
-        st.subheader("🟢 Institutional Heavy Buying Stocks")
+        st.subheader("🟢 Institutional Heavy Buying Stocks (Volume Spurt + Accumulation)")
         buying_df = df[df['Status'] == "🟢 Heavy Buying"].sort_values(by="Raw_Ratio", ascending=False)
         if not buying_df.empty:
             st.dataframe(buying_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']], use_container_width=True)
@@ -167,7 +179,7 @@ def render_screener_dashboard():
             st.info("Filhaal kisi bhi stock me Heavy Buying trigger nahi hui hai.")
 
     with tab_sell:
-        st.subheader("🔴 Institutional Heavy Selling Stocks")
+        st.subheader("🔴 Institutional Heavy Selling Stocks (Volume Dump + Distribution)")
         selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
         if not selling_df.empty:
             st.dataframe(selling_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']], use_container_width=True)
