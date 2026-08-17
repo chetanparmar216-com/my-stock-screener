@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 NSE Level-Based Trade Screener (Strict 1:3 Target Engine)")
+st.title("🎯 NSE Level-Based Trade Screener (All F&O Universe)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -33,6 +33,7 @@ refresh_sec = st.sidebar.slider("Refresh Interval (Sec):", min_value=10, max_val
 if st.sidebar.button("🔄 Force Refresh Now"):
     st.rerun()
 
+# Complete Active NSE F&O Universe (180+ Stocks)
 FO_STOCKS = [
     "AARTIIND.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABFRL.NS", "ACC.NS", "ADANIENT.NS",
     "ADANIPORTS.NS", "ALKEM.NS", "AMBUJACEM.NS", "APOLLOHOSP.NS", "APOLLOTYRE.NS", "ASHOKLEY.NS",
@@ -44,7 +45,7 @@ FO_STOCKS = [
     "COALINDIA.NS", "COFORGE.NS", "COLPAL.NS", "CONCOR.NS", "COROMANDEL.NS", "CROMPTON.NS",
     "CUB.NS", "CUMMINSIND.NS", "DABUR.NS", "DALBHARAT.NS", "DEEPAKNTR.NS", "DIVISLAB.NS",
     "DIXON.NS", "DLF.NS", "DRREDDY.NS", "EICHERMOT.NS", "ESCORTS.NS", "EXIDEIND.NS",
-    "FEDERALBNK.NS", "GAIL.NS", "GLENMARK.NS", "GMRINFRA.NS", "GNFC.NS", "GODREJCP.NS",
+    "FEDERALBNK.NS", "GAIL.NS", "GLENMARK.NS", "GMRAIRPORT.NS", "GNFC.NS", "GODREJCP.NS",
     "GODREJPROP.NS", "GRANULES.NS", "GRASIM.NS", "GUJGASLTD.NS", "HAL.NS", "HAVELLS.NS",
     "HCLTECH.NS", "HDFCAMC.NS", "HDFCBANK.NS", "HDFCLIFE.NS", "HEROMOTOCO.NS", "HINDALCO.NS",
     "HINDCOPPER.NS", "HINDPETRO.NS", "HINDUNILVR.NS", "ICICIBANK.NS", "ICICIGI.NS",
@@ -62,8 +63,8 @@ FO_STOCKS = [
     "SHRIRAMFIN.NS", "SIEMENS.NS", "SRF.NS", "SUNPHARMA.NS", "SUNTV.NS", "SYNGENE.NS",
     "TATACHEM.NS", "TATACOMM.NS", "TATACONSUM.NS", "TATAMOTORS.NS", "TATAPOWER.NS",
     "TATASTEEL.NS", "TCS.NS", "TECHM.NS", "TITAN.NS", "TORNTPHARM.NS", "TORNTPOWER.NS",
-    "TRENT.NS", "TVSMOTOR.NS", "UBL.NS", "ULTRACEMCO.NS", "UPL.NS", "VEDL.NS", "VOLTAS.NS",
-    "WIPRO.NS", "ZEEL.NS", "ZYDUSLIFE.NS"
+    "TRENT.NS", "TVSMOTOR.NS", "UBL.NS", "ULTRACEMCO.NS", "UNIONBANK.NS", "UPL.NS",
+    "VEDL.NS", "VOLTAS.NS", "WIPRO.NS", "ZEEL.NS", "ZYDUSLIFE.NS"
 ]
 
 def load_all_market_data():
@@ -206,7 +207,7 @@ df = load_all_market_data()
 if df.empty:
     st.error("Market data load nahi hua. Page refresh karein.")
 else:
-    st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
+    st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Total F&O Tracked: {len(df)} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
     tab_best, tab_gainers, tab_losers, tab_buy, tab_short, tab_btst, tab_swing, tab_heavy_buy, tab_heavy_sell = st.tabs([
         "⭐ Best Stock Selection",
@@ -217,7 +218,7 @@ else:
     ])
 
     with tab_best:
-        st.subheader("⭐ Best Fresh Entry Picks (Strict 1:3 Target & Capital Risk Engine)")
+        st.subheader("⭐ Best Fresh Entry Picks (Strict 1:3 Target & Risk Engine)")
         best_candidates = df[
             (df['LTP'] >= df['Buy'] * 0.998) & 
             (df['Breakout_Distance'] <= 1.5) & 
