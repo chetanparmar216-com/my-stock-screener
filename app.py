@@ -9,9 +9,14 @@ st.title("📊 NSE Institutional Flow Screener (Heavy Buying & Selling)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
+
+# 1. Auto Refresh ON/OFF Toggle Option
 auto_refresh = st.sidebar.checkbox("🔄 Enable Auto-Refresh", value=True)
+
+# 2. Refresh Interval Slider (Yeh tabhi chalega jab auto-refresh ON hoga)
 refresh_sec = st.sidebar.slider("Refresh Interval (Sec):", min_value=10, max_value=120, value=30, disabled=not auto_refresh)
 
+# 3. Manual Refresh Button (Jab auto-refresh OFF ho, tab manually update karne ke liye)
 if st.sidebar.button("🔄 Force Refresh Now"):
     st.rerun()
 
@@ -110,6 +115,7 @@ def fetch_stock_data(ticker):
     except Exception:
         return None
 
+# Refresh system variable controls
 fragment_refresh = refresh_sec if auto_refresh else None
 
 @st.fragment(run_every=fragment_refresh)
@@ -126,7 +132,7 @@ def render_screener_dashboard():
 
     st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
-    # Tabs for Dedicated Views
+    # Tabs Configuration
     tab_buy, tab_sell, tab_intraday, tab_btst, tab_all = st.tabs([
         "🟢 Heavy Buying (Accumulation)",
         "🔴 Heavy Selling (Distribution)",
@@ -141,7 +147,7 @@ def render_screener_dashboard():
         if not buying_df.empty:
             st.dataframe(buying_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20', 'Prev_High']], use_container_width=True)
         else:
-            st.info("Filhaal kisi bhi stock me Heavy Buying (Volume >= 1.4x + Bullish OBV) trigger nahi hui hai.")
+            st.info("Filhaal kisi bhi stock me Heavy Buying trigger nahi hui hai.")
 
     with tab_sell:
         st.subheader("🔴 Institutional Heavy Selling Stocks (Volume Dump + Down Trend)")
@@ -149,7 +155,7 @@ def render_screener_dashboard():
         if not selling_df.empty:
             st.dataframe(selling_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']], use_container_width=True)
         else:
-            st.info("Filhaal kisi bhi stock me Heavy Selling (Volume >= 1.4x + Bearish OBV) trigger nahi hui hai.")
+            st.info("Filhaal kisi bhi stock me Heavy Selling trigger nahi hui hai.")
 
     with tab_intraday:
         st.subheader("⚡ Intraday Momentum Setups")
