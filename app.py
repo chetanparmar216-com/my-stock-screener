@@ -14,7 +14,7 @@ WATCHLIST = [
 @st.cache_data(ttl=300)
 def fetch_and_calculate(ticker):
     try:
-        data = yf.download(ticker, period="6mo", interval="1d", progress=False)
+        data = yf.Ticker(ticker).history(period="6mo", interval="1d")
         if len(data) < 50:
             return None
             
@@ -50,23 +50,38 @@ def fetch_and_calculate(ticker):
         return None
 
 with st.spinner("Market data scan ho raha hai..."):
-    results = [fetch_and_calculate(ticker) for ticker in WATCHLIST]
-    results = [r for r in results if r is not None]
+    results = []
+    for ticker in WATCHLIST:
+        res = fetch_and_calculate(ticker)
+        if res:
+            results.append(res)
     df = pd.DataFrame(results)
 
-tab1, tab2, tab3 = st.tabs(["⚡ Intraday Setup", "🌙 BTST Setup", "📈 Swing Trade Setup"])
+if df.empty:
+    st.error("Market data fetch nahi ho paya. Kripya page refresh karein.")
+else:
+    tab1, tab2, tab3 = st.tabs(["⚡ Intraday Setup", "🌙 BTST Setup", "📈 Swing Trade Setup"])
 
-with tab1:
-    st.subheader("Intraday Momentum (Breakout + Volume)")
-    intraday_df = df[(df['Close'] > df['Prev_High']) & (df['Volume'] > 1.2 * df['Vol_Avg']) & (df['RSI'] >= 55)]
-    st.dataframe(intraday_df[['Symbol', 'Close', 'Prev_High', 'RSI', 'Volume', 'Vol_Avg']], use_container_width=True)
+    with tab1:
+        st.subheader("Intraday Momentum (Breakout + Volume)")
+        intraday_df = df[(df['Close'] > df['Prev_High']) & (df['Volume'] > 1.2 * df['Vol_Avg']) & (df['RSI'] >= 55)]
+        if not intraday_df.empty:
+            st.dataframe(intraday_df[['Symbol', 'Close', 'Prev_High', 'RSI', 'Volume', 'Vol_Avg']], use_container_width=True)
+        else:
+            st.info("Abhi koi stock Intraday criteria match nahi kar raha.")
 
-with tab2:
-    st.subheader("BTST (Closing Near High + Volume)")
-    btst_df = df[(df['Close'] >= 0.98 * df['High']) & (df['Close'] > df['Open']) & (df['Close'] > df['EMA_20']) & (df['Volume'] > 1.5 * df['Vol_Avg'])]
-    st.dataframe(btst_df[['Symbol', 'Close', 'High', 'EMA_20', 'RSI', 'Volume']], use_container_width=True)
+    with tab2:
+        st.subheader("BTST (Closing Near High + Volume)")
+        btst_df = df[(df['Close'] >= 0.98 * df['High']) & (df['Close'] > df['Open']) & (df['Close'] > df['EMA_20']) & (df['Volume'] > 1.2 * df['Vol_Avg'])]
+        if not btst_df.empty:
+            st.dataframe(btst_df[['Symbol', 'Close', 'High', 'EMA_20', 'RSI', 'Volume']], use_container_width=True)
+        else:
+            st.info("Abhi koi stock BTST criteria match nahi kar raha.")
 
-with tab3:
-    st.subheader("Swing Setup (Trend Following)")
-    swing_df = df[(df['Close'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 50) & (df['RSI'] <= 68)]
-    st.dataframe(swing_df[['Symbol', 'Close', 'EMA_50', 'EMA_200', 'RSI']], use_container_width=True)
+    with tab3:
+        st.subheader("Swing Setup (Trend Following)")
+        swing_df = df[(df['Close'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 50) & (df['RSI'] <= 68)]
+        if not swing_df.empty:
+            st.dataframe(swing_df[['Symbol', 'Close', 'EMA_50', 'EMA_200', 'RSI']], use_container_width=True)
+        else:
+            st.info("Abhi koi stock Swing criteria match nahi kar raha.")
