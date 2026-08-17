@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 NSE Pro F&O Screener (With Automatic SL & Target Calculator)")
+st.title("📊 NSE Pro F&O Screener (Clear Buy / Sell Price Levels)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -113,16 +113,17 @@ def fetch_stock_data(ticker):
         elif ltp < prev_low and vol_ratio >= 1.4 and curr['OBV'] < curr['OBV_EMA']:
             inst_action = "🔴 Heavy Selling"
 
-        # Math Calculations for SL and Target (Risk Management)
-        # For BUY: SL is slightly below Prev Day High, Target is 1:2
-        buy_sl = round(prev_high * 0.992, 2)  # 0.8% buffer below breakout level
-        buy_risk = round(ltp - buy_sl, 2)
-        buy_target = round(ltp + (buy_risk * 2), 2)
+        # BUY LEVELS: Buy Entry at Prev High + Buffer
+        buy_entry = round(max(ltp, prev_high), 2)
+        buy_sl = round(prev_high * 0.992, 2)
+        buy_risk = max(round(buy_entry - buy_sl, 2), round(buy_entry * 0.005, 2))
+        buy_target = round(buy_entry + (buy_risk * 2), 2)
 
-        # For SHORT: SL is slightly above Prev Day Low, Target is 1:2
-        sell_sl = round(prev_low * 1.008, 2)  # 0.8% buffer above breakdown level
-        sell_risk = round(sell_sl - ltp, 2)
-        sell_target = round(ltp - (sell_risk * 2), 2)
+        # SHORT LEVELS: Sell Entry at Prev Low
+        sell_entry = round(min(ltp, prev_low), 2)
+        sell_sl = round(prev_low * 1.008, 2)
+        sell_risk = max(round(sell_sl - sell_entry, 2), round(sell_entry * 0.005, 2))
+        sell_target = round(sell_entry - (sell_risk * 2), 2)
 
         return {
             "Symbol": ticker.replace(".NS", ""),
@@ -134,14 +135,15 @@ def fetch_stock_data(ticker):
             "Prev_Low": prev_low,
             "RSI": round(float(curr['RSI']), 2),
             "Status": inst_action,
-            "Rec_Entry": ltp,
+            "Buy_Above": buy_entry,
             "Stop_Loss_BUY": buy_sl,
             "Target_BUY": buy_target,
+            "Sell_Below": sell_entry,
             "Stop_Loss_SELL": sell_sl,
             "Target_SELL": sell_target,
+            "EMA_20": round(float(curr['EMA_20']), 2),
             "EMA_50": round(float(curr['EMA_50']), 2),
-            "EMA_200": round(float(curr['EMA_200']), 2),
-            "EMA_20": round(float(curr['EMA_20']), 2)
+            "EMA_200": round(float(curr['EMA_200']), 2)
         }
     except Exception:
         return None
@@ -150,21 +152,21 @@ fragment_refresh = refresh_sec if auto_refresh else None
 
 @st.fragment(run_every=fragment_refresh)
 def render_screener_dashboard():
-    with st.spinner("Calculating Live Setups, SL and Targets..."):
+    with st.spinner("Calculating Buy/Sell Levels..."):
         with ThreadPoolExecutor(max_workers=12) as executor:
             results = list(executor.map(fetch_stock_data, FO_STOCKS))
         results = [r for r in results if r is not None]
         df = pd.DataFrame(results)
 
     if df.empty:
-        st.error("Data processing failed.")
+        st.error("Market data load nahi hua. Page refresh karein.")
         return
 
     st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
     tab_buy_sig, tab_sell_sig, tab_pullback, tab_gainers, tab_losers, tab_all = st.tabs([
-        "🚀 High-Prob BUY Signals",
-        "🔻 High-Prob SHORT Signals",
+        "🚀 BUY Signals & Levels",
+        "🔻 SHORT Signals & Levels",
         "📈 Pullback (Swing Buy)",
         "🔥 Top Gainers",
         "❄️ Top Losers",
@@ -172,28 +174,26 @@ def render_screener_dashboard():
     ])
 
     with tab_buy_sig:
-        st.subheader("🔥 Tactical Breakout BUY Signals (With Risk Management)")
-        buy_signals = df[(df['LTP'] > df['Prev_High']) & (df['Raw_Ratio'] >= 1.4) & (df['RSI'] >= 55)].sort_values(by="Change %", ascending=False)
+        st.subheader("🚀 High-Probability BUY Signals (With Clear Entry, SL & Target)")
+        buy_signals = df[(df['LTP'] >= df['Prev_High']) & (df['Raw_Ratio'] >= 1.2) & (df['RSI'] >= 50)].sort_values(by="Change %", ascending=False)
         if not buy_signals.empty:
-            # Display columns with explicit Stop Loss and Target
-            st.dataframe(buy_signals[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'Prev_High', 'Stop_Loss_BUY', 'Target_BUY', 'Status']], use_container_width=True)
+            st.dataframe(buy_signals[['Symbol', 'LTP', 'Buy_Above', 'Stop_Loss_BUY', 'Target_BUY', 'Vol_Ratio', 'RSI', 'Status']], use_container_width=True)
         else:
             st.info("Abhi koi stock Strict Breakout BUY criteria match nahi kar raha hai.")
 
     with tab_sell_sig:
-        st.subheader("🔻 Tactical Breakdown SHORT Signals (With Risk Management)")
-        sell_signals = df[(df['LTP'] < df['Prev_Low']) & (df['Raw_Ratio'] >= 1.4) & (df['RSI'] <= 45)].sort_values(by="Change %", ascending=True)
+        st.subheader("🔻 High-Probability SHORT Signals (With Clear Entry, SL & Target)")
+        sell_signals = df[(df['LTP'] <= df['Prev_Low']) & (df['Raw_Ratio'] >= 1.2) & (df['RSI'] <= 50)].sort_values(by="Change %", ascending=True)
         if not sell_signals.empty:
-            # Display columns with explicit Stop Loss and Target for short selling
-            st.dataframe(sell_signals[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'Prev_Low', 'Stop_Loss_SELL', 'Target_SELL', 'Status']], use_container_width=True)
+            st.dataframe(sell_signals[['Symbol', 'LTP', 'Sell_Below', 'Stop_Loss_SELL', 'Target_SELL', 'Vol_Ratio', 'RSI', 'Status']], use_container_width=True)
         else:
             st.info("Abhi koi stock Strict Breakdown SHORT criteria match nahi kar raha hai.")
 
     with tab_pullback:
-        st.subheader("📈 Pullback Swing Buy (Strong Trend + Support Reversal)")
+        st.subheader("📈 Pullback Swing Buy (Support Reversal)")
         pullback_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['LTP'] <= df['EMA_20'] * 1.015) & (df['LTP'] >= df['EMA_20'] * 0.985)]
         if not pullback_df.empty:
-            st.dataframe(pullback_df[['Symbol', 'LTP', 'Change %', 'EMA_20', 'EMA_50', 'RSI', 'Vol_Ratio']], use_container_width=True)
+            st.dataframe(pullback_df[['Symbol', 'LTP', 'EMA_20', 'EMA_50', 'RSI', 'Vol_Ratio']], use_container_width=True)
         else:
             st.info("Filhaal koi trend-following pullback support level par nahi hai.")
 
