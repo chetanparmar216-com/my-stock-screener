@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 NSE Level-Based Expert Screener (Clean Numbers)")
+st.title("🎯 NSE Level-Based Expert Screener (Color Coded LTP & %)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -107,8 +107,6 @@ def fetch_stock_data(ticker):
         prev_high = round(float(prev['High']), 2)
         prev_low = round(float(prev['Low']), 2)
         vol_ratio = round(curr['Volume'] / curr['Vol_Avg'], 2) if curr['Vol_Avg'] > 0 else 1.0
-        
-        # Fixed line 110 parenthesis mismatch bug here
         change_pct = round(((float(curr['Close']) - float(prev['Close'])) / float(prev['Close'])) * 100, 2)
 
         # Institutional Flow Action
@@ -156,7 +154,7 @@ def fetch_stock_data(ticker):
     except Exception:
         return None
 
-# Global Dynamic Format and Color Rule for all columns
+# Formatting and Dual Color Coding (LTP + Change %)
 def apply_table_style(df_subset):
     format_rules = {
         "Change %": "{:+.2f}%", "LTP": "{:.2f}", "RSI": "{:.2f}", "Open": "{:.2f}", "High": "{:.2f}",
@@ -166,17 +164,27 @@ def apply_table_style(df_subset):
     }
     active_formats = {k: v for k, v in format_rules.items() if k in df_subset.columns}
     
-    return df_subset.style.format(active_formats).map(
-        lambda val: 'color: #00FF66; font-weight: bold;' if isinstance(val, (int, float)) and val > 0 
-        else ('color: #FF3366; font-weight: bold;' if isinstance(val, (int, float)) and val < 0 else ''),
-        subset=['Change %']
-    )
+    def highlight_rows(row):
+        color = ''
+        if 'Change %' in row:
+            if row['Change %'] > 0:
+                color = 'color: #00FF66; font-weight: bold;'
+            elif row['Change %'] < 0:
+                color = 'color: #FF3366; font-weight: bold;'
+        
+        styles = [''] * len(row)
+        for col_name in ['LTP', 'Change %']:
+            if col_name in row.index:
+                styles[row.index.get_loc(col_name)] = color
+        return styles
+
+    return df_subset.style.format(active_formats).apply(highlight_rows, axis=1)
 
 fragment_refresh = refresh_sec if auto_refresh else None
 
 @st.fragment(run_every=fragment_refresh)
 def render_screener_dashboard():
-    with st.spinner("Scanning Market Data..."):
+    with st.spinner("Scanning Market Data & Color Formatting..."):
         with ThreadPoolExecutor(max_workers=12) as executor:
             results = list(executor.map(fetch_stock_data, FO_STOCKS))
         results = [r for r in results if r is not None]
@@ -188,7 +196,7 @@ def render_screener_dashboard():
 
     st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
-    # Tabs Setup
+    # Tabs
     tab_gainers, tab_losers, tab_buy, tab_short, tab_btst, tab_swing, tab_heavy_buy, tab_heavy_sell, tab_all = st.tabs([
         "🚀 Top Gainers",
         "🔻 Top Losers",
@@ -202,63 +210,4 @@ def render_screener_dashboard():
     ])
 
     with tab_gainers:
-        st.subheader("🚀 Top 15 Gainers Today")
-        g_df = df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']]
-        st.dataframe(apply_table_style(g_df), use_container_width=True)
-
-    with tab_losers:
-        st.subheader("🔻 Top 15 Losers Today")
-        l_df = df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']]
-        st.dataframe(apply_table_style(l_df), use_container_width=True)
-
-    with tab_buy:
-        st.subheader("🎯 Resistance Breakout: Entry Level, Target and SL Calculations")
-        buy_signals = df[(df['LTP'] >= df['Resistance_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=False)
-        if not buy_signals.empty:
-            b_view = buy_signals[['Symbol', 'LTP', 'Change %', 'Resistance_Level', 'Buy_Above_Level', 'Stop_Loss_BUY', 'Target_BUY', 'Vol_Ratio', 'Status']]
-            st.dataframe(apply_table_style(b_view), use_container_width=True)
-        else:
-            st.info("Filhaal koi stock Level Breakout ke upar trigger nahi hua hai.")
-
-    with tab_short:
-        st.subheader("🎯 Support Breakdown: Entry Level, Target and SL Calculations")
-        sell_signals = df[(df['LTP'] <= df['Support_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
-        if not sell_signals.empty:
-            s_view = sell_signals[['Symbol', 'LTP', 'Change %', 'Support_Level', 'Sell_Below_Level', 'Stop_Loss_SELL', 'Target_SELL', 'Vol_Ratio', 'Status']]
-            st.dataframe(apply_table_style(s_view), use_container_width=True)
-        else:
-            st.info("Filhaal koi stock Support breakdown trigger nahi kar raha hai.")
-
-    with tab_btst:
-        st.subheader("🌙 BTST Candidates")
-        btst_df = df[(df['LTP'] >= 0.98 * df['High']) & (df['LTP'] > df['Open']) & (df['LTP'] > df['EMA_20'])].sort_values(by="Change %", ascending=False)
-        b_view = btst_df[['Symbol', 'LTP', 'Change %', 'High', 'EMA_20', 'Vol_Ratio']]
-        st.dataframe(apply_table_style(b_view), use_container_width=True)
-
-    with tab_swing:
-        st.subheader("📈 Swing Trading Setups")
-        swing_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 45) & (df['RSI'] <= 70)]
-        if not swing_df.empty:
-            sw_view = swing_df[['Symbol', 'LTP', 'Change %', 'EMA_50', 'EMA_200', 'RSI']]
-            st.dataframe(apply_table_style(sw_view), use_container_width=True)
-        else:
-            st.info("Filhaal koi stock Swing setup criteria match nahi kar raha hai.")
-
-    with tab_heavy_buy:
-        st.subheader("🏛️ Institutional Heavy Buying")
-        buying_df = df[df['Status'] == "🟢 Heavy Buying"].sort_values(by="Raw_Ratio", ascending=False)
-        hb_view = buying_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']]
-        st.dataframe(apply_table_style(hb_view), use_container_width=True)
-
-    with tab_heavy_sell:
-        st.subheader("🏛️ Institutional Heavy Selling")
-        selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
-        hs_view = selling_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']]
-        st.dataframe(apply_table_style(hs_view), use_container_width=True)
-
-    with tab_all:
-        st.subheader("📋 Complete F&O Universe Performance")
-        all_view = df[['Symbol', 'LTP', 'Change %', 'Status', 'Vol_Ratio', 'RSI', 'EMA_20', 'EMA_50', 'EMA_200']]
-        st.dataframe(apply_table_style(all_view), use_container_width=True)
-
-render_screener_dashboard()
+        st.subheader
