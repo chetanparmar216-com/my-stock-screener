@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 NSE Pro F&O Screener (High-Probability Setups)")
+st.title("📊 NSE Pro F&O Screener (With Automatic SL & Target Calculator)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -86,7 +86,7 @@ def fetch_stock_data(ticker):
         rs = gain / loss
         df_stock['RSI'] = 100 - (100 / (1 + rs))
 
-        # Institutional Money Flow: On-Balance Volume (OBV)
+        # OBV Calculation
         obv = [0]
         for i in range(1, len(df_stock)):
             if df_stock['Close'].iloc[i] > df_stock['Close'].iloc[i - 1]:
@@ -101,29 +101,47 @@ def fetch_stock_data(ticker):
         curr = df_stock.iloc[-1]
         prev = df_stock.iloc[-2]
         
+        ltp = round(float(curr['Close']), 2)
+        prev_high = round(float(prev['High']), 2)
+        prev_low = round(float(prev['Low']), 2)
         vol_ratio = round(curr['Volume'] / curr['Vol_Avg'], 2) if curr['Vol_Avg'] > 0 else 1.0
         change_pct = round(((curr['Close'] - prev['Close']) / prev['Close']) * 100, 2)
 
         inst_action = "Neutral"
-        if curr['Close'] > prev['Close'] and vol_ratio >= 1.4 and curr['OBV'] > curr['OBV_EMA']:
+        if ltp > prev_high and vol_ratio >= 1.4 and curr['OBV'] > curr['OBV_EMA']:
             inst_action = "🟢 Heavy Buying"
-        elif curr['Close'] < prev['Close'] and vol_ratio >= 1.4 and curr['OBV'] < curr['OBV_EMA']:
+        elif ltp < prev_low and vol_ratio >= 1.4 and curr['OBV'] < curr['OBV_EMA']:
             inst_action = "🔴 Heavy Selling"
+
+        # Math Calculations for SL and Target (Risk Management)
+        # For BUY: SL is slightly below Prev Day High, Target is 1:2
+        buy_sl = round(prev_high * 0.992, 2)  # 0.8% buffer below breakout level
+        buy_risk = round(ltp - buy_sl, 2)
+        buy_target = round(ltp + (buy_risk * 2), 2)
+
+        # For SHORT: SL is slightly above Prev Day Low, Target is 1:2
+        sell_sl = round(prev_low * 1.008, 2)  # 0.8% buffer above breakdown level
+        sell_risk = round(sell_sl - ltp, 2)
+        sell_target = round(ltp - (sell_risk * 2), 2)
 
         return {
             "Symbol": ticker.replace(".NS", ""),
-            "LTP": round(float(curr['Close']), 2),
+            "LTP": ltp,
             "Change %": change_pct,
-            "Volume": int(curr['Volume']),
             "Vol_Ratio": f"{vol_ratio}x",
             "Raw_Ratio": vol_ratio,
-            "Prev_High": round(float(prev['High']), 2),
-            "Prev_Low": round(float(prev['Low']), 2),
-            "EMA_20": round(float(curr['EMA_20']), 2),
+            "Prev_High": prev_high,
+            "Prev_Low": prev_low,
+            "RSI": round(float(curr['RSI']), 2),
+            "Status": inst_action,
+            "Rec_Entry": ltp,
+            "Stop_Loss_BUY": buy_sl,
+            "Target_BUY": buy_target,
+            "Stop_Loss_SELL": sell_sl,
+            "Target_SELL": sell_target,
             "EMA_50": round(float(curr['EMA_50']), 2),
             "EMA_200": round(float(curr['EMA_200']), 2),
-            "RSI": round(float(curr['RSI']), 2),
-            "Status": inst_action
+            "EMA_20": round(float(curr['EMA_20']), 2)
         }
     except Exception:
         return None
@@ -132,14 +150,14 @@ fragment_refresh = refresh_sec if auto_refresh else None
 
 @st.fragment(run_every=fragment_refresh)
 def render_screener_dashboard():
-    with st.spinner("Processing Trading Setups & Signals..."):
+    with st.spinner("Calculating Live Setups, SL and Targets..."):
         with ThreadPoolExecutor(max_workers=12) as executor:
             results = list(executor.map(fetch_stock_data, FO_STOCKS))
         results = [r for r in results if r is not None]
         df = pd.DataFrame(results)
 
     if df.empty:
-        st.error("Market data load nahi hua. Page refresh karein.")
+        st.error("Data processing failed.")
         return
 
     st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
@@ -154,18 +172,20 @@ def render_screener_dashboard():
     ])
 
     with tab_buy_sig:
-        st.subheader("🔥 High-Probability BUY Setups (Intraday Breakout + Volume Spike)")
+        st.subheader("🔥 Tactical Breakout BUY Signals (With Risk Management)")
         buy_signals = df[(df['LTP'] > df['Prev_High']) & (df['Raw_Ratio'] >= 1.4) & (df['RSI'] >= 55)].sort_values(by="Change %", ascending=False)
         if not buy_signals.empty:
-            st.dataframe(buy_signals[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Prev_High', 'Status']], use_container_width=True)
+            # Display columns with explicit Stop Loss and Target
+            st.dataframe(buy_signals[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'Prev_High', 'Stop_Loss_BUY', 'Target_BUY', 'Status']], use_container_width=True)
         else:
             st.info("Abhi koi stock Strict Breakout BUY criteria match nahi kar raha hai.")
 
     with tab_sell_sig:
-        st.subheader("🔻 High-Probability SHORT Setups (Intraday Breakdown + Heavy Selling)")
+        st.subheader("🔻 Tactical Breakdown SHORT Signals (With Risk Management)")
         sell_signals = df[(df['LTP'] < df['Prev_Low']) & (df['Raw_Ratio'] >= 1.4) & (df['RSI'] <= 45)].sort_values(by="Change %", ascending=True)
         if not sell_signals.empty:
-            st.dataframe(sell_signals[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Prev_Low', 'Status']], use_container_width=True)
+            # Display columns with explicit Stop Loss and Target for short selling
+            st.dataframe(sell_signals[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'Prev_Low', 'Stop_Loss_SELL', 'Target_SELL', 'Status']], use_container_width=True)
         else:
             st.info("Abhi koi stock Strict Breakdown SHORT criteria match nahi kar raha hai.")
 
