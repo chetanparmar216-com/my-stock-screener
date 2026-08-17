@@ -3,7 +3,7 @@ import pandas as pd
 import yfinance as yf
 import time
 
-st.set_page_config(page_title="NSE F&O Ultimate Pro Screener", layout="wide")
+st.set_page_config(page_title="NSE F&O Expert Screener", layout="wide")
 
 # Custom Styling (Font 16px & High Readability)
 st.markdown("""
@@ -22,7 +22,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 NSE Level-Based Screener (Fresh Entry Filter Added)")
+st.title("🎯 NSE Level-Based Trade Screener")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -117,21 +117,18 @@ def load_all_market_data():
                 elif ltp < prev['Close'] and vol_ratio >= 1.4 and curr['OBV'] < curr['OBV_EMA']:
                     inst_action = "🔴 Heavy Selling"
 
-                # Trigger Levels
-                buy_trigger = prev_high
-                buy_entry = round(buy_trigger * 1.001, 2)
-                buy_sl = round(buy_trigger * 0.992, 2)
+                # Standard Actionable Levels
+                buy_entry = round(prev_high * 1.001, 2)
+                buy_sl = round(prev_high * 0.992, 2)
                 buy_risk = max(round(buy_entry - buy_sl, 2), round(buy_entry * 0.005, 2))
                 buy_target = round(buy_entry + (buy_risk * 2), 2)
 
-                sell_trigger = prev_low
-                sell_entry = round(sell_trigger * 0.999, 2)
-                sell_sl = round(sell_trigger * 1.008, 2)
+                sell_entry = round(prev_low * 0.999, 2)
+                sell_sl = round(prev_low * 1.008, 2)
                 sell_risk = max(round(sell_sl - sell_entry, 2), round(sell_entry * 0.005, 2))
                 sell_target = round(sell_entry - (sell_risk * 2), 2)
 
-                # Distance from Breakout Level (in %)
-                breakout_distance = round(((ltp - buy_trigger) / buy_trigger) * 100, 2)
+                breakout_distance = round(((ltp - prev_high) / prev_high) * 100, 2)
 
                 processed.append({
                     "Symbol": ticker.replace(".NS", ""),
@@ -142,15 +139,15 @@ def load_all_market_data():
                     "Vol_Ratio": f"{vol_ratio}x",
                     "Raw_Ratio": vol_ratio,
                     "RSI": round(float(curr['RSI']), 2),
-                    "Resistance_Level": buy_trigger,
                     "Buy_Above_Level": buy_entry,
-                    "Stop_Loss_BUY": buy_sl,
-                    "Target_BUY": buy_target,
-                    "Breakout_Distance": breakout_distance,
-                    "Support_Level": sell_trigger,
+                    "Stop_Loss": buy_sl,
+                    "Target": buy_target,
                     "Sell_Below_Level": sell_entry,
-                    "Stop_Loss_SELL": sell_sl,
-                    "Target_SELL": sell_target,
+                    "Stop_Loss_SHORT": sell_sl,
+                    "Target_SHORT": sell_target,
+                    "Breakout_Distance": breakout_distance,
+                    "Prev_High": prev_high,
+                    "Prev_Low": prev_low,
                     "Status": inst_action,
                     "EMA_20": round(float(curr['EMA_20']), 2),
                     "EMA_50": round(float(curr['EMA_50']), 2),
@@ -165,8 +162,8 @@ def load_all_market_data():
 def apply_table_style(df_subset):
     format_rules = {
         "Change %": "{:+.2f}%", "LTP": "{:.2f}", "RSI": "{:.2f}", "Open": "{:.2f}", "High": "{:.2f}",
-        "Resistance_Level": "{:.2f}", "Buy_Above_Level": "{:.2f}", "Stop_Loss_BUY": "{:.2f}", "Target_BUY": "{:.2f}",
-        "Support_Level": "{:.2f}", "Sell_Below_Level": "{:.2f}", "Stop_Loss_SELL": "{:.2f}", "Target_SELL": "{:.2f}",
+        "Buy_Above_Level": "{:.2f}", "Stop_Loss": "{:.2f}", "Target": "{:.2f}",
+        "Sell_Below_Level": "{:.2f}", "Stop_Loss_SHORT": "{:.2f}", "Target_SHORT": "{:.2f}",
         "EMA_20": "{:.2f}", "EMA_50": "{:.2f}", "EMA_200": "{:.2f}"
     }
     active_formats = {k: v for k, v in format_rules.items() if k in df_subset.columns}
@@ -202,10 +199,9 @@ else:
     ])
 
     with tab_best:
-        st.subheader("⭐ Strict Fresh Entry BTST / Intraday Candidates")
-        # STRICT FILTER: Breakout must be fresh (between 0% and 1.5% only)
+        st.subheader("⭐ Best Fresh Entry Picks (Buy Above + Stop Loss + Target)")
         best_candidates = df[
-            (df['LTP'] >= df['Resistance_Level']) & 
+            (df['LTP'] >= df['Prev_High']) & 
             (df['Breakout_Distance'] <= 1.5) & 
             (df['Status'] == "🟢 Heavy Buying") & 
             (df['Raw_Ratio'] >= 1.3) & 
@@ -214,56 +210,53 @@ else:
         ].sort_values(by="Raw_Ratio", ascending=False).head(2)
 
         if not best_candidates.empty:
-            st.dataframe(apply_table_style(best_candidates[['Symbol', 'LTP', 'Change %', 'Buy_Above_Level', 'Stop_Loss_BUY', 'Target_BUY', 'Vol_Ratio', 'RSI', 'Status']]), use_container_width=True)
-            st.success("✅ Yeh stocks bilkul fresh breakout point par hain (Entry level se max 1.5% ke andar). Risk reward favorable hai.")
+            st.dataframe(apply_table_style(best_candidates[['Symbol', 'LTP', 'Change %', 'Buy_Above_Level', 'Stop_Loss', 'Target']]), use_container_width=True)
         else:
-            st.info("ℹ️ Filhaal koi stock fresh entry range (+0% se +1.5%) me nahi hai. Jo stock already 3-5% bhag chuke hain unhe risk se bachane ke liye filter out kar diya gaya hai.")
+            st.info("Filhaal koi stock fresh entry range (+0% se +1.5%) me nahi hai.")
 
     with tab_gainers:
         st.subheader("🚀 Top 15 Gainers Today")
-        st.dataframe(apply_table_style(df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']]), use_container_width=True)
+        st.dataframe(apply_table_style(df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)[['Symbol', 'LTP', 'Change %', 'Buy_Above_Level', 'Stop_Loss', 'Target']]), use_container_width=True)
 
     with tab_losers:
         st.subheader("🔻 Top 15 Losers Today")
-        st.dataframe(apply_table_style(df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']]), use_container_width=True)
+        st.dataframe(apply_table_style(df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)[['Symbol', 'LTP', 'Change %', 'Sell_Below_Level', 'Stop_Loss_SHORT', 'Target_SHORT']]), use_container_width=True)
 
     with tab_buy:
-        st.subheader("🎯 Fresh Resistance Breakout (< 1.5% from Entry Level)")
-        buy_signals = df[(df['LTP'] >= df['Resistance_Level']) & (df['Breakout_Distance'] <= 1.5) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=False)
+        st.subheader("⚡ Level BUY Signals (Fresh Resistance Breakout < 1.5%)")
+        buy_signals = df[(df['LTP'] >= df['Prev_High']) & (df['Breakout_Distance'] <= 1.5) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=False)
         if not buy_signals.empty:
-            b_view = buy_signals[['Symbol', 'LTP', 'Change %', 'Resistance_Level', 'Buy_Above_Level', 'Stop_Loss_BUY', 'Target_BUY', 'Vol_Ratio', 'Status']]
-            st.dataframe(apply_table_style(b_view), use_container_width=True)
+            st.dataframe(apply_table_style(buy_signals[['Symbol', 'LTP', 'Change %', 'Buy_Above_Level', 'Stop_Loss', 'Target']]), use_container_width=True)
         else:
             st.info("Filhaal koi stock fresh Breakout zone me nahi hai.")
 
     with tab_short:
-        st.subheader("🎯 Support Breakdown: Entry Level, Target and SL Calculations")
-        sell_signals = df[(df['LTP'] <= df['Support_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
+        st.subheader("📉 Level SHORT Signals (Support Breakdown)")
+        sell_signals = df[(df['LTP'] <= df['Prev_Low']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
         if not sell_signals.empty:
-            s_view = sell_signals[['Symbol', 'LTP', 'Change %', 'Support_Level', 'Sell_Below_Level', 'Stop_Loss_SELL', 'Target_SELL', 'Vol_Ratio', 'Status']]
-            st.dataframe(apply_table_style(s_view), use_container_width=True)
+            st.dataframe(apply_table_style(sell_signals[['Symbol', 'LTP', 'Change %', 'Sell_Below_Level', 'Stop_Loss_SHORT', 'Target_SHORT']]), use_container_width=True)
         else:
             st.info("Filhaal koi stock Support breakdown trigger nahi kar raha hai.")
 
     with tab_btst:
-        st.subheader("🌙 BTST Candidates")
+        st.subheader("🌙 BTST Setups (Closing near High)")
         btst_df = df[(df['LTP'] >= 0.98 * df['High']) & (df['LTP'] > df['Open']) & (df['LTP'] > df['EMA_20'])].sort_values(by="Change %", ascending=False)
-        st.dataframe(apply_table_style(btst_df[['Symbol', 'LTP', 'Change %', 'High', 'EMA_20', 'Vol_Ratio']]), use_container_width=True)
+        st.dataframe(apply_table_style(btst_df[['Symbol', 'LTP', 'Change %', 'Buy_Above_Level', 'Stop_Loss', 'Target']]), use_container_width=True)
 
     with tab_swing:
-        st.subheader("📈 Swing Trading Setups")
+        st.subheader("📈 Swing Trading Setups (Trend Following)")
         swing_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 45) & (df['RSI'] <= 70)]
         if not swing_df.empty:
-            st.dataframe(apply_table_style(swing_df[['Symbol', 'LTP', 'Change %', 'EMA_50', 'EMA_200', 'RSI']]), use_container_width=True)
+            st.dataframe(apply_table_style(swing_df[['Symbol', 'LTP', 'Change %', 'Buy_Above_Level', 'Stop_Loss', 'Target']]), use_container_width=True)
         else:
             st.info("Filhaal koi stock Swing setup criteria match nahi kar raha hai.")
 
     with tab_heavy_buy:
         st.subheader("🏛️ Institutional Heavy Buying")
         buying_df = df[df['Status'] == "🟢 Heavy Buying"].sort_values(by="Raw_Ratio", ascending=False)
-        st.dataframe(apply_table_style(buying_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']]), use_container_width=True)
+        st.dataframe(apply_table_style(buying_df[['Symbol', 'LTP', 'Change %', 'Buy_Above_Level', 'Stop_Loss', 'Target']]), use_container_width=True)
 
     with tab_heavy_sell:
         st.subheader("🏛️ Institutional Heavy Selling")
         selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
-        st.dataframe(apply_table_style(selling_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']]), use_container_width=True)
+        st.dataframe(apply_table_style(selling_df[['Symbol', 'LTP', 'Change %', 'Sell_Below_Level', 'Stop_Loss_SHORT', 'Target_SHORT']]), use_container_width=True)
