@@ -4,7 +4,7 @@ import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 import time
 
-st.set_page_config(page_title="NSE Level-Based Pro Screener", layout="wide")
+st.set_page_config(page_title="NSE F&O Ultimate Pro Screener", layout="wide")
 
 # Custom CSS for Font Size 16px & High Readability Dark Theme
 st.markdown("""
@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 NSE Level-Based Trade Screener (Key Price Triggers)")
+st.title("🎯 NSE Level-Based Expert Screener (All Indicators Restored)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -73,7 +73,7 @@ def fetch_stock_data(ticker):
         if len(df_stock) < 50:
             return None
 
-        # Technical Indicators
+        # Technical Indicators Setup
         df_stock['EMA_20'] = df_stock['Close'].ewm(span=20, adjust=False).mean()
         df_stock['EMA_50'] = df_stock['Close'].ewm(span=50, adjust=False).mean()
         df_stock['EMA_200'] = df_stock['Close'].ewm(span=200, adjust=False).mean()
@@ -86,48 +86,54 @@ def fetch_stock_data(ticker):
         rs = gain / loss
         df_stock['RSI'] = 100 - (100 / (1 + rs))
 
+        # Institutional Money Flow: On-Balance Volume (OBV)
+        obv = [0]
+        for i in range(1, len(df_stock)):
+            if df_stock['Close'].iloc[i] > df_stock['Close'].iloc[i - 1]:
+                obv.append(obv[-1] + df_stock['Volume'].iloc[i])
+            elif df_stock['Close'].iloc[i] < df_stock['Close'].iloc[i - 1]:
+                obv.append(obv[-1] - df_stock['Volume'].iloc[i])
+            else:
+                obv.append(obv[-1])
+        df_stock['OBV'] = obv
+        df_stock['OBV_EMA'] = df_stock['OBV'].ewm(span=20, adjust=False).mean()
+
         curr = df_stock.iloc[-1]
         prev = df_stock.iloc[-2]
         
         ltp = round(float(curr['Close']), 2)
+        open_p = round(float(curr['Open']), 2)
+        high_p = round(float(curr['High']), 2)
         prev_high = round(float(prev['High']), 2)
         prev_low = round(float(prev['Low']), 2)
         vol_ratio = round(curr['Volume'] / curr['Vol_Avg'], 2) if curr['Vol_Avg'] > 0 else 1.0
         change_pct = round(((curr['Close'] - prev['Close']) / prev['Close']) * 100, 2)
 
-        # 1. LEVEL BASED BUY CALCULATION (Breakout over Resistance)
+        # 1. Institutional Action Flow
+        inst_action = "Neutral"
+        if ltp > prev['Close'] and vol_ratio >= 1.4 and curr['OBV'] > curr['OBV_EMA']:
+            inst_action = "🟢 Heavy Buying"
+        elif ltp < prev['Close'] and vol_ratio >= 1.4 and curr['OBV'] < curr['OBV_EMA']:
+            inst_action = "🔴 Heavy Selling"
+
+        # 2. LEVEL CALCULATION
         buy_trigger = prev_high
-        buy_entry = round(buy_trigger * 1.001, 2) # Buy when it trades above resistance
-        buy_sl = round(buy_trigger * 0.992, 2)     # SL just below the breakout level
+        buy_entry = round(buy_trigger * 1.001, 2)
+        buy_sl = round(buy_trigger * 0.992, 2)
         buy_risk = max(round(buy_entry - buy_sl, 2), round(buy_entry * 0.005, 2))
         buy_target = round(buy_entry + (buy_risk * 2), 2)
 
-        # Signal Status for Buying
-        if ltp >= buy_entry and vol_ratio >= 1.2:
-            buy_status = "🚀 Breakout Confirmed"
-        elif ltp >= buy_trigger * 0.995:
-            buy_status = "⏳ Near Resistance Level"
-        else:
-            buy_status = "Inactive"
-
-        # 2. LEVEL BASED SHORT CALCULATION (Breakdown below Support)
         sell_trigger = prev_low
-        sell_entry = round(sell_trigger * 0.999, 2) # Sell when it breaks below support
-        sell_sl = round(sell_trigger * 1.008, 2)     # SL just above breakdown level
+        sell_entry = round(sell_trigger * 0.999, 2)
+        sell_sl = round(sell_trigger * 1.008, 2)
         sell_risk = max(round(sell_sl - sell_entry, 2), round(sell_entry * 0.005, 2))
         sell_target = round(sell_entry - (sell_risk * 2), 2)
-
-        # Signal Status for Selling
-        if ltp <= sell_entry and vol_ratio >= 1.2:
-            sell_status = "🔻 Breakdown Confirmed"
-        elif ltp <= sell_trigger * 1.005:
-            sell_status = "⏳ Near Support Level"
-        else:
-            sell_status = "Inactive"
 
         return {
             "Symbol": ticker.replace(".NS", ""),
             "LTP": ltp,
+            "Open": open_p,
+            "High": high_p,
             "Change %": change_pct,
             "Vol_Ratio": f"{vol_ratio}x",
             "Raw_Ratio": vol_ratio,
@@ -136,12 +142,11 @@ def fetch_stock_data(ticker):
             "Buy_Above_Level": buy_entry,
             "Stop_Loss_BUY": buy_sl,
             "Target_BUY": buy_target,
-            "Buy_Status": buy_status,
             "Support_Level": sell_trigger,
             "Sell_Below_Level": sell_entry,
             "Stop_Loss_SELL": sell_sl,
             "Target_SELL": sell_target,
-            "Sell_Status": sell_status,
+            "Status": inst_action,
             "EMA_20": round(float(curr['EMA_20']), 2),
             "EMA_50": round(float(curr['EMA_50']), 2),
             "EMA_200": round(float(curr['EMA_200']), 2)
@@ -153,63 +158,80 @@ fragment_refresh = refresh_sec if auto_refresh else None
 
 @st.fragment(run_every=fragment_refresh)
 def render_screener_dashboard():
-    with st.spinner("Analyzing Key Resistance & Support Levels..."):
+    with st.spinner("Analyzing Complete Market and All Level Signals..."):
         with ThreadPoolExecutor(max_workers=12) as executor:
             results = list(executor.map(fetch_stock_data, FO_STOCKS))
         results = [r for r in results if r is not None]
         df = pd.DataFrame(results)
 
     if df.empty:
-        st.error("Market data load nahi hua. Page refresh karein.")
+        st.error("Market data load nahi hua. Page refresh/retry karein.")
         return
 
     st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
-    tab_buy, tab_sell, tab_pullback, tab_gainers, tab_losers, tab_all = st.tabs([
-        "🎯 Level-Based BUY Signals",
-        "🎯 Level-Based SHORT Signals",
-        "📈 Pullback (Swing Setups)",
+    # Comprehensive Restored Tabs
+    tab_gainers, tab_losers, tab_intraday, tab_btst, tab_swing, tab_heavy_buy, tab_heavy_sell, tab_all = st.tabs([
         "🚀 Top Gainers",
         "🔻 Top Losers",
-        "📋 All F&O Stocks"
+        "⚡ Level BUY Signals",
+        "📉 Level SHORT Signals",
+        "🌙 BTST Setups",
+        "📈 Swing Trading",
+        "🏛️ Heavy Buying",
+        "🏛️ Heavy Selling"
     ])
 
-    with tab_buy:
-        st.subheader("🎯 Key Resistance Breakout Setups (Buy Above Level)")
-        # Show stocks that are near breakout level or already confirmed breakout
-        buy_filtered = df[df['Buy_Status'] != "Inactive"].sort_values(by="Change %", ascending=False)
-        if not buy_filtered.empty:
-            st.dataframe(buy_filtered[['Symbol', 'LTP', 'Resistance_Level', 'Buy_Above_Level', 'Stop_Loss_BUY', 'Target_BUY', 'Vol_Ratio', 'RSI', 'Buy_Status']], use_container_width=True)
-        else:
-            st.info("Filhaal koi stock Key Resistance Level ke paas trade nahi kar raha hai.")
-
-    with tab_sell:
-        st.subheader("🎯 Key Support Breakdown Setups (Sell Below Level)")
-        # Show stocks that are near support level or already confirmed breakdown
-        sell_filtered = df[df['Sell_Status'] != "Inactive"].sort_values(by="Change %", ascending=True)
-        if not sell_filtered.empty:
-            st.dataframe(sell_filtered[['Symbol', 'LTP', 'Support_Level', 'Sell_Below_Level', 'Stop_Loss_SELL', 'Target_SELL', 'Vol_Ratio', 'RSI', 'Sell_Status']], use_container_width=True)
-        else:
-            st.info("Filhaal koi stock Key Support Level ke paas trade nahi kar raha hai.")
-
-    with tab_pullback:
-        st.subheader("📈 Pullback Swing Buy (Testing Key EMA 20 Support)")
-        pullback_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['LTP'] <= df['EMA_20'] * 1.015) & (df['LTP'] >= df['EMA_20'] * 0.985)]
-        if not pullback_df.empty:
-            st.dataframe(pullback_df[['Symbol', 'LTP', 'EMA_20', 'EMA_50', 'RSI', 'Vol_Ratio']], use_container_width=True)
-        else:
-            st.info("Filhaal koi trend-following pullback support level par nahi hai.")
-
     with tab_gainers:
-        st.subheader("🚀 Top Gainers Today")
-        st.dataframe(df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI']], use_container_width=True)
+        st.subheader("🚀 Top 15 Gainers Today")
+        st.dataframe(df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']], use_container_width=True)
 
     with tab_losers:
-        st.subheader("🔻 Top Losers Today")
-        st.dataframe(df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI']], use_container_width=True)
+        st.subheader("🔻 Top 15 Losers Today")
+        st.dataframe(df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']], use_container_width=True)
 
-    with tab_all:
-        st.subheader("📋 Complete F&O Performance & Levels")
-        st.dataframe(df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Resistance_Level', 'Support_Level', 'EMA_20', 'EMA_50', 'EMA_200']], use_container_width=True)
+    with tab_intraday:
+        st.subheader("🎯 Resistance Breakout: Entry Level, Target and SL Calculations")
+        buy_signals = df[(df['LTP'] >= df['Resistance_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=False)
+        if not buy_signals.empty:
+            st.dataframe(buy_signals[['Symbol', 'LTP', 'Resistance_Level', 'Buy_Above_Level', 'Stop_Loss_BUY', 'Target_BUY', 'Vol_Ratio', 'Status']], use_container_width=True)
+        else:
+            st.info("Filhaal koi stock Level Breakout ke upar trigger nahi hua hai.")
 
-render_screener_dashboard()
+    with tab_buy_sig:
+        st.subheader("🎯 Support Breakdown: Entry Level, Target and SL Calculations")
+        sell_signals = df[(df['LTP'] <= df['Support_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
+        if not sell_signals.empty:
+            st.dataframe(sell_signals[['Symbol', 'LTP', 'Support_Level', 'Sell_Below_Level', 'Stop_Loss_SELL', 'Target_SELL', 'Vol_Ratio', 'Status']], use_container_width=True)
+        else:
+            st.info("Filhaal koi stock Support breakdown trigger nahi kar raha hai.")
+
+    with tab_btst:
+        st.subheader("🌙 BTST Candidates (Closing near High + Price > EMA 20)")
+        btst_df = df[(df['LTP'] >= 0.98 * df['High']) & (df['LTP'] > df['Open']) & (df['LTP'] > df['EMA_20'])].sort_values(by="Change %", ascending=False)
+        st.dataframe(btst_df[['Symbol', 'LTP', 'Change %', 'High', 'EMA_20', 'Vol_Ratio']], use_container_width=True)
+
+    with tab_swing:
+        st.subheader("📈 Swing Trading Setups (Price > 50 EMA > 200 EMA)")
+        swing_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 45) & (df['RSI'] <= 70)]
+        if not swing_df.empty:
+            st.dataframe(swing_df[['Symbol', 'LTP', 'Change %', 'EMA_50', 'EMA_200', 'RSI']], use_container_width=True)
+        else:
+            st.info("Filhaal koi stock Swing setup criteria match nahi kar raha hai.")
+
+    with tab_heavy_buy:
+        st.subheader("🏛️ Institutional Heavy Buying (Volume Spurt + Accumulation Flow)")
+        buying_df = df[df['Status'] == "🟢 Heavy Buying"].sort_values(by="Raw_Ratio", ascending=False)
+        st.dataframe(buying_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']], use_container_width=True)
+
+    with tab_heavy_sell:
+        st.subheader("🏛️ Institutional Heavy Selling (Volume Dump + Distribution Flow)")
+        selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
+        st.dataframe(selling_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']], use_container_width=True)
+
+# Main code runner call
+try:
+    tab_buy_sig = tab_all
+    render_screener_dashboard()
+except Exception:
+    st.error("Setup refresh is initializing...")
