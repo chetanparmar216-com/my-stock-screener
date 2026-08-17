@@ -154,7 +154,7 @@ def fetch_stock_data(ticker):
     except Exception:
         return None
 
-# Color styling and clear .2f decimal limit (Mata pichle 00000 hatata hai)
+# Clean 2-digit percentage styling
 def apply_table_style(df_subset):
     return df_subset.style.format({"Change %": "{:+.2f}%"}).map(
         lambda val: 'color: #00FF66; font-weight: bold;' if isinstance(val, (int, float)) and val > 0 
@@ -208,4 +208,47 @@ def render_screener_dashboard():
             b_view = buy_signals[['Symbol', 'LTP', 'Change %', 'Resistance_Level', 'Buy_Above_Level', 'Stop_Loss_BUY', 'Target_BUY', 'Vol_Ratio', 'Status']]
             st.dataframe(apply_table_style(b_view), use_container_width=True)
         else:
-            st.info("Filhaal koi stock Level Breakout
+            st.info("Filhaal koi stock Level Breakout ke upar trigger nahi hua hai.")
+
+    with tab_short:
+        st.subheader("🎯 Support Breakdown: Entry Level, Target and SL Calculations")
+        sell_signals = df[(df['LTP'] <= df['Support_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
+        if not sell_signals.empty:
+            s_view = sell_signals[['Symbol', 'LTP', 'Change %', 'Support_Level', 'Sell_Below_Level', 'Stop_Loss_SELL', 'Target_SELL', 'Vol_Ratio', 'Status']]
+            st.dataframe(apply_table_style(s_view), use_container_width=True)
+        else:
+            st.info("Filhaal koi stock Support breakdown trigger nahi kar raha hai.")
+
+    with tab_btst:
+        st.subheader("🌙 BTST Candidates")
+        btst_df = df[(df['LTP'] >= 0.98 * df['High']) & (df['LTP'] > df['Open']) & (df['LTP'] > df['EMA_20'])].sort_values(by="Change %", ascending=False)
+        b_view = btst_df[['Symbol', 'LTP', 'Change %', 'High', 'EMA_20', 'Vol_Ratio']]
+        st.dataframe(apply_table_style(b_view), use_container_width=True)
+
+    with tab_swing:
+        st.subheader("📈 Swing Trading Setups")
+        swing_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 45) & (df['RSI'] <= 70)]
+        if not swing_df.empty:
+            sw_view = swing_df[['Symbol', 'LTP', 'Change %', 'EMA_50', 'EMA_200', 'RSI']]
+            st.dataframe(apply_table_style(sw_view), use_container_width=True)
+        else:
+            st.info("Filhaal koi stock Swing setup criteria match nahi kar raha hai.")
+
+    with tab_heavy_buy:
+        st.subheader("🏛️ Institutional Heavy Buying")
+        buying_df = df[df['Status'] == "🟢 Heavy Buying"].sort_values(by="Raw_Ratio", ascending=False)
+        hb_view = buying_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']]
+        st.dataframe(apply_table_style(hb_view), use_container_width=True)
+
+    with tab_heavy_sell:
+        st.subheader("🏛️ Institutional Heavy Selling")
+        selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
+        hs_view = selling_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']]
+        st.dataframe(apply_table_style(hs_view), use_container_width=True)
+
+    with tab_all:
+        st.subheader("📋 Complete F&O Universe Performance")
+        all_view = df[['Symbol', 'LTP', 'Change %', 'Status', 'Vol_Ratio', 'RSI', 'EMA_20', 'EMA_50', 'EMA_200']]
+        st.dataframe(apply_table_style(all_view), use_container_width=True)
+
+render_screener_dashboard()
