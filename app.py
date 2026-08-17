@@ -6,7 +6,7 @@ import time
 
 st.set_page_config(page_title="NSE F&O Ultimate Pro Screener", layout="wide")
 
-# Custom CSS for Font Size 16px & High Readability Dark Theme
+# Custom CSS for Font Size 16px & High Readability
 st.markdown("""
     <style>
         html, body, [class*="css"] {
@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 NSE Level-Based Expert Screener (All Indicators Restored)")
+st.title("🎯 NSE Level-Based Expert Screener")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
@@ -73,7 +73,7 @@ def fetch_stock_data(ticker):
         if len(df_stock) < 50:
             return None
 
-        # Technical Indicators Setup
+        # Indicators
         df_stock['EMA_20'] = df_stock['Close'].ewm(span=20, adjust=False).mean()
         df_stock['EMA_50'] = df_stock['Close'].ewm(span=50, adjust=False).mean()
         df_stock['EMA_200'] = df_stock['Close'].ewm(span=200, adjust=False).mean()
@@ -86,7 +86,7 @@ def fetch_stock_data(ticker):
         rs = gain / loss
         df_stock['RSI'] = 100 - (100 / (1 + rs))
 
-        # Institutional Money Flow: On-Balance Volume (OBV)
+        # OBV
         obv = [0]
         for i in range(1, len(df_stock)):
             if df_stock['Close'].iloc[i] > df_stock['Close'].iloc[i - 1]:
@@ -109,14 +109,14 @@ def fetch_stock_data(ticker):
         vol_ratio = round(curr['Volume'] / curr['Vol_Avg'], 2) if curr['Vol_Avg'] > 0 else 1.0
         change_pct = round(((curr['Close'] - prev['Close']) / prev['Close']) * 100, 2)
 
-        # 1. Institutional Action Flow
+        # Institutional Flow Action
         inst_action = "Neutral"
         if ltp > prev['Close'] and vol_ratio >= 1.4 and curr['OBV'] > curr['OBV_EMA']:
             inst_action = "🟢 Heavy Buying"
         elif ltp < prev['Close'] and vol_ratio >= 1.4 and curr['OBV'] < curr['OBV_EMA']:
             inst_action = "🔴 Heavy Selling"
 
-        # 2. LEVEL CALCULATION
+        # Level Triggers
         buy_trigger = prev_high
         buy_entry = round(buy_trigger * 1.001, 2)
         buy_sl = round(buy_trigger * 0.992, 2)
@@ -158,20 +158,20 @@ fragment_refresh = refresh_sec if auto_refresh else None
 
 @st.fragment(run_every=fragment_refresh)
 def render_screener_dashboard():
-    with st.spinner("Analyzing Complete Market and All Level Signals..."):
+    with st.spinner("Analyzing Complete Market Data..."):
         with ThreadPoolExecutor(max_workers=12) as executor:
             results = list(executor.map(fetch_stock_data, FO_STOCKS))
         results = [r for r in results if r is not None]
         df = pd.DataFrame(results)
 
     if df.empty:
-        st.error("Market data load nahi hua. Page refresh/retry karein.")
+        st.error("Market data load nahi hua. Page refresh karein.")
         return
 
     st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
-    # Comprehensive Restored Tabs
-    tab_gainers, tab_losers, tab_intraday, tab_btst, tab_swing, tab_heavy_buy, tab_heavy_sell, tab_all = st.tabs([
+    # Tabs List
+    tab_gainers, tab_losers, tab_buy, tab_short, tab_btst, tab_swing, tab_heavy_buy, tab_heavy_sell, tab_all = st.tabs([
         "🚀 Top Gainers",
         "🔻 Top Losers",
         "⚡ Level BUY Signals",
@@ -179,7 +179,8 @@ def render_screener_dashboard():
         "🌙 BTST Setups",
         "📈 Swing Trading",
         "🏛️ Heavy Buying",
-        "🏛️ Heavy Selling"
+        "🏛️ Heavy Selling",
+        "📋 All F&O Stocks"
     ])
 
     with tab_gainers:
@@ -190,7 +191,7 @@ def render_screener_dashboard():
         st.subheader("🔻 Top 15 Losers Today")
         st.dataframe(df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'Status']], use_container_width=True)
 
-    with tab_intraday:
+    with tab_buy:
         st.subheader("🎯 Resistance Breakout: Entry Level, Target and SL Calculations")
         buy_signals = df[(df['LTP'] >= df['Resistance_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=False)
         if not buy_signals.empty:
@@ -198,7 +199,7 @@ def render_screener_dashboard():
         else:
             st.info("Filhaal koi stock Level Breakout ke upar trigger nahi hua hai.")
 
-    with tab_buy_sig:
+    with tab_short:
         st.subheader("🎯 Support Breakdown: Entry Level, Target and SL Calculations")
         sell_signals = df[(df['LTP'] <= df['Support_Level']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
         if not sell_signals.empty:
@@ -229,9 +230,9 @@ def render_screener_dashboard():
         selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
         st.dataframe(selling_df[['Symbol', 'LTP', 'Change %', 'Vol_Ratio', 'RSI', 'EMA_20']], use_container_width=True)
 
-# Main code runner call
-try:
-    tab_buy_sig = tab_all
-    render_screener_dashboard()
-except Exception:
-    st.error("Setup refresh is initializing...")
+    with tab_all:
+        st.subheader("📋 Complete F&O Universe Performance")
+        st.dataframe(df[['Symbol', 'LTP', 'Change %', 'Status', 'Vol_Ratio', 'RSI', 'EMA_20', 'EMA_50', 'EMA_200']], use_container_width=True)
+
+# Run Dashboard directly
+render_screener_dashboard()
