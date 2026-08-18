@@ -3,13 +3,8 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import time
-from datetime import datetime
 
 st.set_page_config(page_title="NSE F&O 1:3 Level Screener", layout="wide")
-
-# Session state me trigger times store karne ke liye dictionary
-if "alert_times" not in st.session_state:
-    st.session_state.alert_times = {}
 
 # Custom Styling
 st.markdown("""
@@ -23,15 +18,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎯 NSE Level-Based Trade Screener (All F&O Universe)")
+st.title("🎯 NSE Level-Based Trade Screener (Exact Intraday Trigger Time)")
 
 # Sidebar Settings
 st.sidebar.header("⚙️ Scanner Controls")
 auto_refresh = st.sidebar.checkbox("🔄 Enable Auto-Refresh", value=True)
-refresh_sec = st.sidebar.slider("Refresh Interval (Sec):", min_value=10, max_value=120, value=30, disabled=not auto_refresh)
+refresh_sec = st.sidebar.slider("Refresh Interval (Sec):", min_value=15, max_value=120, value=30, disabled=not auto_refresh)
 
-if st.sidebar.button("🔄 Force Refresh & Reset Timestamps"):
-    st.session_state.alert_times = {}
+if st.sidebar.button("🔄 Force Refresh Now"):
     st.cache_data.clear()
     st.rerun()
 
@@ -68,44 +62,51 @@ FO_STOCKS = [
     "VEDL.NS", "VOLTAS.NS", "WIPRO.NS", "ZEEL.NS", "ZYDUSLIFE.NS"
 ]
 
-@st.cache_data(ttl=15)
+@st.cache_data(ttl=30)
 def load_all_market_data():
     try:
-        data = yf.download(FO_STOCKS, period="6mo", interval="1d", group_by='ticker', threads=True, progress=False)
+        # 1. Daily data for EMAs, Levels, Pivots, ATR
+        daily_data = yf.download(FO_STOCKS, period="6mo", interval="1d", group_by='ticker', threads=True, progress=False)
+        # 2. 5-Minute Intraday data to pinpoint the exact candle time of trigger
+        intra_data = yf.download(FO_STOCKS, period="5d", interval="5m", group_by='ticker', threads=True, progress=False)
+        
         processed = []
 
         for ticker in FO_STOCKS:
             try:
-                if ticker not in data.columns.levels[0]:
+                if ticker not in daily_data.columns.levels[0] or ticker not in intra_data.columns.levels[0]:
                     continue
-                df_stock = data[ticker].dropna().copy()
-                if len(df_stock) < 50:
+                
+                df_daily = daily_data[ticker].dropna().copy()
+                df_intra = intra_data[ticker].dropna().copy()
+
+                if len(df_daily) < 50 or len(df_intra) == 0:
                     continue
 
-                # Indicators
-                df_stock['EMA_20'] = df_stock['Close'].ewm(span=20, adjust=False).mean()
-                df_stock['EMA_50'] = df_stock['Close'].ewm(span=50, adjust=False).mean()
-                df_stock['EMA_200'] = df_stock['Close'].ewm(span=200, adjust=False).mean()
-                df_stock['Vol_Avg'] = df_stock['Volume'].rolling(window=10).mean()
+                # Indicator Calculations (Daily)
+                df_daily['EMA_20'] = df_daily['Close'].ewm(span=20, adjust=False).mean()
+                df_daily['EMA_50'] = df_daily['Close'].ewm(span=50, adjust=False).mean()
+                df_daily['EMA_200'] = df_daily['Close'].ewm(span=200, adjust=False).mean()
+                df_daily['Vol_Avg'] = df_daily['Volume'].rolling(window=10).mean()
 
-                tr1 = df_stock['High'] - df_stock['Low']
-                tr2 = (df_stock['High'] - df_stock['Close'].shift()).abs()
-                tr3 = (df_stock['Low'] - df_stock['Close'].shift()).abs()
+                tr1 = df_daily['High'] - df_daily['Low']
+                tr2 = (df_daily['High'] - df_daily['Close'].shift()).abs()
+                tr3 = (df_daily['Low'] - df_daily['Close'].shift()).abs()
                 tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
                 atr = tr.rolling(14).mean().iloc[-1]
 
-                delta = df_stock['Close'].diff()
+                delta = df_daily['Close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
                 rs = gain / (loss.replace(0, np.nan))
-                df_stock['RSI'] = (100 - (100 / (1 + rs))).fillna(50)
+                df_daily['RSI'] = (100 - (100 / (1 + rs))).fillna(50)
 
-                direction = np.sign(df_stock['Close'].diff()).fillna(0)
-                df_stock['OBV'] = (direction * df_stock['Volume']).cumsum()
-                df_stock['OBV_EMA'] = df_stock['OBV'].ewm(span=20, adjust=False).mean()
+                direction = np.sign(df_daily['Close'].diff()).fillna(0)
+                df_daily['OBV'] = (direction * df_daily['Volume']).cumsum()
+                df_daily['OBV_EMA'] = df_daily['OBV'].ewm(span=20, adjust=False).mean()
 
-                curr = df_stock.iloc[-1]
-                prev = df_stock.iloc[-2]
+                curr = df_daily.iloc[-1]
+                prev = df_daily.iloc[-2]
 
                 ltp = round(float(curr['Close']), 2)
                 open_p = round(float(curr['Open']), 2)
@@ -120,6 +121,7 @@ def load_all_market_data():
                 r1 = round((2 * pivot) - prev_low, 2)
                 s1 = round((2 * pivot) - prev_high, 2)
 
+                # Levels & 1:3 Setup
                 buy_entry = round(max(prev_high, r1), 2)
                 buy_sl = round(max(pivot, prev_high - (0.8 * atr)), 2)
                 buy_risk_points = max(buy_entry - buy_sl, buy_entry * 0.003)
@@ -140,8 +142,32 @@ def load_all_market_data():
 
                 breakout_distance = round(((ltp - buy_entry) / buy_entry) * 100, 2)
 
+                # --- EXACT INTRADAY CANDLE TRIGGER TIME LOGIC ---
+                # Aaj ki intraday candles filter karein
+                today_date = df_intra.index[-1].date()
+                today_candles = df_intra[df_intra.index.date == today_date]
+
+                buy_trigger_time = "-"
+                sell_trigger_time = "-"
+
+                if not today_candles.empty:
+                    # Buy condition trigger candle (High >= Buy level)
+                    buy_hits = today_candles[today_candles['High'] >= buy_entry]
+                    if not buy_hits.empty:
+                        # Pehli candle jab level cross hua
+                        first_candle_time = buy_hits.index[0]
+                        buy_trigger_time = first_candle_time.strftime("%H:%M")
+
+                    # Short condition trigger candle (Low <= Sell level)
+                    sell_hits = today_candles[today_candles['Low'] <= sell_entry]
+                    if not sell_hits.empty:
+                        first_candle_time = sell_hits.index[0]
+                        sell_trigger_time = first_candle_time.strftime("%H:%M")
+
                 processed.append({
                     "Symbol": ticker.replace(".NS", ""),
+                    "Buy_Trigger_Time": buy_trigger_time,
+                    "Sell_Trigger_Time": sell_trigger_time,
                     "LTP": ltp,
                     "Open": open_p,
                     "High": high_p,
@@ -170,24 +196,6 @@ def load_all_market_data():
         return pd.DataFrame(processed)
     except Exception:
         return pd.DataFrame()
-
-# Function jo pehli baar trigger hone ka time track karti hai
-def assign_alert_time(df_subset, setup_name):
-    if df_subset.empty:
-        return df_subset
-    
-    current_time_str = datetime.now().strftime("%H:%M:%S")
-    times = []
-    
-    for symbol in df_subset['Symbol']:
-        key = f"{setup_name}_{symbol}"
-        if key not in st.session_state.alert_times:
-            st.session_state.alert_times[key] = current_time_str
-        times.append(st.session_state.alert_times[key])
-        
-    df_subset = df_subset.copy()
-    df_subset['Trigger_Time'] = times
-    return df_subset
 
 def apply_table_style(df_subset):
     format_rules = {
@@ -218,7 +226,7 @@ df = load_all_market_data()
 if df.empty:
     st.error("Market data load nahi hua. Page refresh karein.")
 else:
-    st.caption(f"⏱️ Dashboard Live: {time.strftime('%H:%M:%S IST')} | Tracked Stocks: {len(df)} | Auto-Refresh: {'ON' if auto_refresh else 'OFF'}")
+    st.caption(f"⏱️ Screener Synchronized: {time.strftime('%H:%M:%S IST')} | Stocks Loaded: {len(df)}")
 
     tab_best, tab_gainers, tab_losers, tab_buy, tab_short, tab_btst, tab_swing, tab_heavy_buy, tab_heavy_sell = st.tabs([
         "⭐ Best Stock Selection",
@@ -240,33 +248,29 @@ else:
         ].sort_values(by="Raw_Ratio", ascending=False).head(2)
 
         if not best.empty:
-            best = assign_alert_time(best, "best")
-            cols_best = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
-            st.dataframe(apply_table_style(best[cols_best]), use_container_width=True)
+            cols_best = ['Symbol', 'Buy_Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            st.dataframe(apply_table_style(best[cols_best].rename(columns={'Buy_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
         else:
             st.info("Filhaal koi stock fresh entry range (+0% se +1.5%) me nahi hai.")
 
     with tab_gainers:
         st.subheader("🚀 Top 15 Gainers Today")
         top_g = df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)
-        top_g = assign_alert_time(top_g, "gainers")
-        cols_g = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
-        st.dataframe(apply_table_style(top_g[cols_g]), use_container_width=True)
+        cols_g = ['Symbol', 'Buy_Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+        st.dataframe(apply_table_style(top_g[cols_g].rename(columns={'Buy_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
 
     with tab_losers:
         st.subheader("🔻 Top 15 Losers Today")
         top_l = df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)
-        top_l = assign_alert_time(top_l, "losers")
-        cols_l = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
-        st.dataframe(apply_table_style(top_l[cols_l]), use_container_width=True)
+        cols_l = ['Symbol', 'Sell_Trigger_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
+        st.dataframe(apply_table_style(top_l[cols_l].rename(columns={'Sell_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
 
     with tab_buy:
         st.subheader("⚡ Level BUY Signals (Strict 1:3 Risk Engine)")
         buy_signals = df[(df['LTP'] >= df['Buy'] * 0.998) & (df['Breakout_Distance'] <= 1.5) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=False)
         if not buy_signals.empty:
-            buy_signals = assign_alert_time(buy_signals, "buy_lvl")
-            cols_b = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
-            st.dataframe(apply_table_style(buy_signals[cols_b]), use_container_width=True)
+            cols_b = ['Symbol', 'Buy_Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            st.dataframe(apply_table_style(buy_signals[cols_b].rename(columns={'Buy_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
         else:
             st.info("Filhaal koi stock fresh Breakout zone me nahi hai.")
 
@@ -274,9 +278,8 @@ else:
         st.subheader("📉 Level SHORT Signals")
         sell_signals = df[(df['LTP'] <= df['Sell']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
         if not sell_signals.empty:
-            sell_signals = assign_alert_time(sell_signals, "short_lvl")
-            cols_s = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
-            st.dataframe(apply_table_style(sell_signals[cols_s]), use_container_width=True)
+            cols_s = ['Symbol', 'Sell_Trigger_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
+            st.dataframe(apply_table_style(sell_signals[cols_s].rename(columns={'Sell_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
         else:
             st.info("Filhaal koi stock Support breakdown trigger nahi kar raha hai.")
 
@@ -284,17 +287,15 @@ else:
         st.subheader("🌙 BTST Setups")
         btst_df = df[(df['LTP'] >= (df['High'] * 0.98)) & (df['LTP'] > df['Open']) & (df['LTP'] > df['EMA_20'])].sort_values(by="Change %", ascending=False)
         if not btst_df.empty:
-            btst_df = assign_alert_time(btst_df, "btst")
-            cols_btst = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
-            st.dataframe(apply_table_style(btst_df[cols_btst]), use_container_width=True)
+            cols_btst = ['Symbol', 'Buy_Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            st.dataframe(apply_table_style(btst_df[cols_btst].rename(columns={'Buy_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
 
     with tab_swing:
         st.subheader("📈 Swing Trading Setups")
         swing_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 45) & (df['RSI'] <= 70)]
         if not swing_df.empty:
-            swing_df = assign_alert_time(swing_df, "swing")
-            cols_sw = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
-            st.dataframe(apply_table_style(swing_df[cols_sw]), use_container_width=True)
+            cols_sw = ['Symbol', 'Buy_Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            st.dataframe(apply_table_style(swing_df[cols_sw].rename(columns={'Buy_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
         else:
             st.info("Filhaal koi stock Swing setup criteria match nahi kar raha hai.")
 
@@ -302,17 +303,15 @@ else:
         st.subheader("🏛️ Institutional Heavy Buying")
         buying_df = df[df['Status'] == "🟢 Heavy Buying"].sort_values(by="Raw_Ratio", ascending=False)
         if not buying_df.empty:
-            buying_df = assign_alert_time(buying_df, "heavy_buy")
-            cols_hb = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
-            st.dataframe(apply_table_style(buying_df[cols_hb]), use_container_width=True)
+            cols_hb = ['Symbol', 'Buy_Trigger_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            st.dataframe(apply_table_style(buying_df[cols_hb].rename(columns={'Buy_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
 
     with tab_heavy_sell:
         st.subheader("🏛️ Institutional Heavy Selling")
         selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
         if not selling_df.empty:
-            selling_df = assign_alert_time(selling_df, "heavy_sell")
-            cols_hs = ['Symbol', 'Trigger_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
-            st.dataframe(apply_table_style(selling_df[cols_hs]), use_container_width=True)
+            cols_hs = ['Symbol', 'Sell_Trigger_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
+            st.dataframe(apply_table_style(selling_df[cols_hs].rename(columns={'Sell_Trigger_Time': 'Trigger Time (Candle)'})), use_container_width=True)
 
     if auto_refresh:
         time.sleep(refresh_sec)
