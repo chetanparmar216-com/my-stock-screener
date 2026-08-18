@@ -3,22 +3,18 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import time
+from datetime import datetime
 
 st.set_page_config(page_title="NSE F&O 1:3 Level Screener", layout="wide")
 
 # Custom Styling
 st.markdown("""
     <style>
-        html, body, [class*="css"] {
-            font-size: 16px !important;
-        }
+        html, body, [class*="css"] { font-size: 16px !important; }
         h1 { font-size: 26px !important; }
         h2, h3 { font-size: 20px !important; }
         .stDataFrame div { font-size: 16px !important; }
-        button[data-baseweb="tab"] {
-            font-size: 16px !important;
-            font-weight: bold !important;
-        }
+        button[data-baseweb="tab"] { font-size: 16px !important; font-weight: bold !important; }
         .stSidebar [class*="css"] { font-size: 16px !important; }
     </style>
 """, unsafe_allow_html=True)
@@ -31,9 +27,9 @@ auto_refresh = st.sidebar.checkbox("🔄 Enable Auto-Refresh", value=True)
 refresh_sec = st.sidebar.slider("Refresh Interval (Sec):", min_value=10, max_value=120, value=30, disabled=not auto_refresh)
 
 if st.sidebar.button("🔄 Force Refresh Now"):
+    st.cache_data.clear()
     st.rerun()
 
-# Complete Active NSE F&O Universe (180+ Stocks)
 FO_STOCKS = [
     "AARTIIND.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABFRL.NS", "ACC.NS", "ADANIENT.NS",
     "ADANIPORTS.NS", "ALKEM.NS", "AMBUJACEM.NS", "APOLLOHOSP.NS", "APOLLOTYRE.NS", "ASHOKLEY.NS",
@@ -67,69 +63,66 @@ FO_STOCKS = [
     "VEDL.NS", "VOLTAS.NS", "WIPRO.NS", "ZEEL.NS", "ZYDUSLIFE.NS"
 ]
 
+@st.cache_data(ttl=60)
 def load_all_market_data():
     try:
         data = yf.download(FO_STOCKS, period="6mo", interval="1d", group_by='ticker', threads=True, progress=False)
         processed = []
-        
+        scan_timestamp = datetime.now().strftime("%H:%M:%S")
+
         for ticker in FO_STOCKS:
             try:
                 if ticker not in data.columns.levels[0]:
                     continue
-                df_stock = data[ticker].dropna()
+                df_stock = data[ticker].dropna().copy()
                 if len(df_stock) < 50:
                     continue
 
+                # Technical Indicators
                 df_stock['EMA_20'] = df_stock['Close'].ewm(span=20, adjust=False).mean()
                 df_stock['EMA_50'] = df_stock['Close'].ewm(span=50, adjust=False).mean()
                 df_stock['EMA_200'] = df_stock['Close'].ewm(span=200, adjust=False).mean()
                 df_stock['Vol_Avg'] = df_stock['Volume'].rolling(window=10).mean()
 
+                # ATR
                 tr1 = df_stock['High'] - df_stock['Low']
                 tr2 = (df_stock['High'] - df_stock['Close'].shift()).abs()
                 tr3 = (df_stock['Low'] - df_stock['Close'].shift()).abs()
                 tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
                 atr = tr.rolling(14).mean().iloc[-1]
 
+                # RSI
                 delta = df_stock['Close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                rs = gain / loss
-                df_stock['RSI'] = 100 - (100 / (1 + rs))
+                rs = gain / (loss.replace(0, np.nan))
+                df_stock['RSI'] = (100 - (100 / (1 + rs))).fillna(50)
 
-                obv = [0]
-                for i in range(1, len(df_stock)):
-                    if df_stock['Close'].iloc[i] > df_stock['Close'].iloc[i - 1]:
-                        obv.append(obv[-1] + df_stock['Volume'].iloc[i])
-                    elif df_stock['Close'].iloc[i] < df_stock['Close'].iloc[i - 1]:
-                        obv.append(obv[-1] - df_stock['Volume'].iloc[i])
-                    else:
-                        obv.append(obv[-1])
-                df_stock['OBV'] = obv
+                # Vectorized OBV
+                direction = np.sign(df_stock['Close'].diff()).fillna(0)
+                df_stock['OBV'] = (direction * df_stock['Volume']).cumsum()
                 df_stock['OBV_EMA'] = df_stock['OBV'].ewm(span=20, adjust=False).mean()
 
                 curr = df_stock.iloc[-1]
                 prev = df_stock.iloc[-2]
-                
+
                 ltp = round(float(curr['Close']), 2)
                 open_p = round(float(curr['Open']), 2)
                 high_p = round(float(curr['High']), 2)
                 prev_high = round(float(prev['High']), 2)
                 prev_low = round(float(prev['Low']), 2)
                 prev_close = round(float(prev['Close']), 2)
-                vol_ratio = round(curr['Volume'] / curr['Vol_Avg'], 2) if curr['Vol_Avg'] > 0 else 1.0
-                change_pct = round(((float(curr['Close']) - float(prev['Close'])) / float(prev['Close'])) * 100, 2)
+                vol_ratio = round(float(curr['Volume'] / curr['Vol_Avg']), 2) if curr['Vol_Avg'] > 0 else 1.0
+                change_pct = round(((ltp - prev_close) / prev_close) * 100, 2)
 
                 pivot = (prev_high + prev_low + prev_close) / 3.0
                 r1 = round((2 * pivot) - prev_low, 2)
                 s1 = round((2 * pivot) - prev_high, 2)
 
-                # Real Level Calculations
+                # Levels & Risk Management
                 buy_entry = round(max(prev_high, r1), 2)
                 buy_sl = round(max(pivot, prev_high - (0.8 * atr)), 2)
                 buy_risk_points = max(buy_entry - buy_sl, buy_entry * 0.003)
-                
-                # Strict 1:3 Target Engine Setup
                 buy_target = round(buy_entry + (buy_risk_points * 3), 2)
                 qty_1k_risk = int(1000 // buy_risk_points) if buy_risk_points > 0 else 1
 
@@ -149,6 +142,7 @@ def load_all_market_data():
 
                 processed.append({
                     "Symbol": ticker.replace(".NS", ""),
+                    "Scan_Time": scan_timestamp,
                     "LTP": ltp,
                     "Open": open_p,
                     "High": high_p,
@@ -207,7 +201,7 @@ df = load_all_market_data()
 if df.empty:
     st.error("Market data load nahi hua. Page refresh karein.")
 else:
-    st.caption(f"⏱️ Last auto-updated: {time.strftime('%H:%M:%S IST')} | Total F&O Tracked: {len(df)} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
+    st.caption(f"⏱️ Last updated: {time.strftime('%H:%M:%S IST')} | Total F&O Tracked: {len(df)} | Mode: {'🔄 Auto-Refresh ON' if auto_refresh else '⏸️ Auto-Refresh OFF'}")
 
     tab_best, tab_gainers, tab_losers, tab_buy, tab_short, tab_btst, tab_swing, tab_heavy_buy, tab_heavy_sell = st.tabs([
         "⭐ Best Stock Selection",
@@ -229,7 +223,7 @@ else:
         ].sort_values(by="Raw_Ratio", ascending=False).head(2)
 
         if not best_candidates.empty:
-            cols_best = ['Symbol', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            cols_best = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
             st.dataframe(apply_table_style(best_candidates[cols_best]), use_container_width=True)
         else:
             st.info("Filhaal koi stock fresh entry range (+0% se +1.5%) me nahi hai.")
@@ -237,20 +231,20 @@ else:
     with tab_gainers:
         st.subheader("🚀 Top 15 Gainers Today")
         top_g = df[df['Change %'] > 0].sort_values(by="Change %", ascending=False).head(15)
-        cols_g = ['Symbol', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+        cols_g = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
         st.dataframe(apply_table_style(top_g[cols_g]), use_container_width=True)
 
     with tab_losers:
         st.subheader("🔻 Top 15 Losers Today")
         top_l = df[df['Change %'] < 0].sort_values(by="Change %", ascending=True).head(15)
-        cols_l = ['Symbol', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
+        cols_l = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
         st.dataframe(apply_table_style(top_l[cols_l]), use_container_width=True)
 
     with tab_buy:
         st.subheader("⚡ Level BUY Signals (Strict 1:3 Risk Engine)")
         buy_signals = df[(df['LTP'] >= df['Buy'] * 0.998) & (df['Breakout_Distance'] <= 1.5) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=False)
         if not buy_signals.empty:
-            cols_b = ['Symbol', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            cols_b = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
             st.dataframe(apply_table_style(buy_signals[cols_b]), use_container_width=True)
         else:
             st.info("Filhaal koi stock fresh Breakout zone me nahi hai.")
@@ -259,7 +253,7 @@ else:
         st.subheader("📉 Level SHORT Signals")
         sell_signals = df[(df['LTP'] <= df['Sell']) & (df['Raw_Ratio'] >= 1.2)].sort_values(by="Change %", ascending=True)
         if not sell_signals.empty:
-            cols_s = ['Symbol', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
+            cols_s = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
             st.dataframe(apply_table_style(sell_signals[cols_s]), use_container_width=True)
         else:
             st.info("Filhaal koi stock Support breakdown trigger nahi kar raha hai.")
@@ -267,14 +261,14 @@ else:
     with tab_btst:
         st.subheader("🌙 BTST Setups")
         btst_df = df[(df['LTP'] >= (df['High'] * 0.98)) & (df['LTP'] > df['Open']) & (df['LTP'] > df['EMA_20'])].sort_values(by="Change %", ascending=False)
-        cols_btst = ['Symbol', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+        cols_btst = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
         st.dataframe(apply_table_style(btst_df[cols_btst]), use_container_width=True)
 
     with tab_swing:
         st.subheader("📈 Swing Trading Setups")
         swing_df = df[(df['LTP'] > df['EMA_50']) & (df['EMA_50'] > df['EMA_200']) & (df['RSI'] >= 45) & (df['RSI'] <= 70)]
         if not swing_df.empty:
-            cols_sw = ['Symbol', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+            cols_sw = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
             st.dataframe(apply_table_style(swing_df[cols_sw]), use_container_width=True)
         else:
             st.info("Filhaal koi stock Swing setup criteria match nahi kar raha hai.")
@@ -282,11 +276,15 @@ else:
     with tab_heavy_buy:
         st.subheader("🏛️ Institutional Heavy Buying")
         buying_df = df[df['Status'] == "🟢 Heavy Buying"].sort_values(by="Raw_Ratio", ascending=False)
-        cols_hb = ['Symbol', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
+        cols_hb = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Buy', 'Stop_Loss', 'Target', 'Quantity (₹1000 Risk)']
         st.dataframe(apply_table_style(buying_df[cols_hb]), use_container_width=True)
 
     with tab_heavy_sell:
         st.subheader("🏛️ Institutional Heavy Selling")
         selling_df = df[df['Status'] == "🔴 Heavy Selling"].sort_values(by="Raw_Ratio", ascending=False)
-        cols_hs = ['Symbol', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
+        cols_hs = ['Symbol', 'Scan_Time', 'LTP', 'Change %', 'Sell', 'Stop_Loss_SHORT', 'Target_SHORT', 'Quantity_SHORT']
         st.dataframe(apply_table_style(selling_df[cols_hs]), use_container_width=True)
+
+    if auto_refresh:
+        time.sleep(refresh_sec)
+        st.rerun()
